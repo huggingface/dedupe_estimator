@@ -1,5 +1,3 @@
-# Compiler
-
 # Compiler flags
 CXXFLAGS = -O3
 
