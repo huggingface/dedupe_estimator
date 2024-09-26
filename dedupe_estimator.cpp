@@ -3,9 +3,6 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
-#include <iomanip>
-#include <cstdint>
-#include <climits>
 
 // Constants
 const uint64_t GEAR_HASH_TABLE[] = {

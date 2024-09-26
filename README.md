@@ -12,6 +12,9 @@ std::hash. This means that collisions are plausible and
 exact numbers may actually vary from run to run. 
 But it should provide a reasonable estimate.
 
+The code is written to be simply and dependency free, and should 
+compile and run out of box with any C++ compiler.
+
 # Compile and Run
 Compile:
 ```bash
