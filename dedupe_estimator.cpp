@@ -1,3 +1,4 @@
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
@@ -267,7 +268,14 @@ const uint64_t MASK = 0xffff000000000000;
 const int MIN_LEN = 16384;
 const int MAX_LEN = 4 * 65536;
 
-size_t add_chunks(std::ifstream& file, std::unordered_map<size_t, size_t>& chunk_ctr) {
+struct chunk_info {
+  size_t len;
+  size_t first_seen;
+};
+
+typedef std::unordered_map<size_t, chunk_info> chunk_ctr_type;
+
+size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_num, std::vector<size_t> &chunks_seen) {
   char buffer[1024 * 1024];
   uint64_t h = 0;
   size_t buflen = 0;
@@ -287,8 +295,19 @@ size_t add_chunks(std::ifstream& file, std::unordered_map<size_t, size_t>& chunk
         std::copy(buffer + prev_offset, buffer + i + 1, std::inserter(buf, buf.end()));
         prev_offset = i + 1;
         size_t chunk_hash = std::hash<std::string>()(buf);
-        chunk_ctr[chunk_hash] = buflen;
+        // insert into chunk counter
+        chunk_ctr_type::const_iterator iter = chunk_ctr.find(chunk_hash);
+        if (iter == chunk_ctr.end()) {
+          chunk_info info;
+          info.len = buflen;
+          info.first_seen = file_num;
+          chunk_ctr[chunk_hash] = info;
+          chunks_seen.push_back(file_num);
+        } else {
+          chunks_seen.push_back(iter->second.first_seen);
+        }
         total_len += buflen;
+        // reset buffer
         buflen = 0;
         buf.clear();
         ctr += 1;
@@ -301,53 +320,175 @@ size_t add_chunks(std::ifstream& file, std::unordered_map<size_t, size_t>& chunk
     std::copy(buffer + prev_offset, buffer + bytesread, std::inserter(buf, buf.end()));
     prev_offset = 0;
   }
+
+  // insert final hash into chunk counter
   size_t chunk_hash = std::hash<std::string>()(buf);
-  chunk_ctr[chunk_hash] = buflen;
+  chunk_ctr_type::const_iterator iter = chunk_ctr.find(chunk_hash);
+  if (iter == chunk_ctr.end()) {
+    chunk_info info;
+    info.len = buflen;
+    info.first_seen = file_num;
+    chunk_ctr[chunk_hash] = info;
+    chunks_seen.push_back(file_num);
+  } else {
+    chunks_seen.push_back(iter->second.first_seen);
+  }
   total_len += buflen;
   return total_len;
 }
 
+struct RGB {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+};
+struct FRGB {
+  float r;
+  float g;
+  float b;
+};
+const size_t IMAGE_DIM = 256;
+const size_t BLOCK_DIM = 8;
+const size_t SEQUENCE_LENGTH = (IMAGE_DIM / BLOCK_DIM) * (IMAGE_DIM / BLOCK_DIM);
+
+FRGB COLORS[16] = {
+    {255, 0, 0},     // Red
+    {0, 255, 0},     // Green
+    {0, 0, 255},     // Blue
+    {255, 255, 0},   // Yellow
+    {255, 165, 0},   // Orange
+    {128, 0, 128},   // Purple
+    {0, 255, 255},   // Cyan
+    {255, 0, 255},   // Magenta
+    {192, 192, 192}, // Silver
+    {128, 128, 128}, // Gray
+    {128, 0, 0},     // Maroon
+    {128, 128, 0},   // Olive
+    {0, 128, 0},     // Dark Green
+    {0, 128, 128},   // Teal
+    {0, 0, 128},     // Navy
+    {255, 105, 180}  // Hot Pink
+};
+
+// returns the interpolated color at pos
+FRGB interpolate_sample(const std::vector<size_t>& s, float pos) {
+  // pos is integral
+  if (pos == float(int(pos))) {
+    int ipos = int(pos);
+    if (ipos < 0) ipos = 0;
+    if (ipos >= s.size()) ipos = s.size() - 1;
+    return COLORS[s[ipos]];
+  } else {
+    int ipos = int(pos);
+    if (ipos < 0) ipos = 0;
+    if (ipos >= s.size()) ipos = s.size() - 1;
+    float left_weight = 1.0 - (pos - ipos);
+    float right_weight = 1.0 - left_weight;
+    FRGB color_left = COLORS[s[ipos]];
+    FRGB color_right = COLORS[s[std::min<size_t>(ipos + 1, s.size() - 1)]];
+    FRGB color;
+    color.r = left_weight * color_left.r + right_weight * color_right.r;
+    color.g = left_weight * color_left.g + right_weight * color_right.g;
+    color.b = left_weight * color_left.b + right_weight * color_right.b;
+    return color;
+  }
+}
+
+std::vector<RGB> generate_color_sequence(const std::vector<size_t>& s) {
+  std::vector<RGB> ret;
+  for (size_t i = 0; i < SEQUENCE_LENGTH; ++i) {
+    // linear interpolate i in s
+    float fpos = (float(i) * s.size()) / SEQUENCE_LENGTH;
+    float fnextpos = (float(i+1) * s.size()) / SEQUENCE_LENGTH;
+    if (fpos > s.size() - 1) {
+      fpos = s.size() - 1;
+    }
+    FRGB color = {0,0,0};
+    float weight = 0;
+    for (float j = fpos; j < fnextpos; ++j) {
+      FRGB sample = interpolate_sample(s, j);
+      float w = std::max<float>(fnextpos - fpos, 1.0);
+      color.r += sample.r * w;
+      color.g += sample.g * w;
+      color.b += sample.b * w;
+      weight += w;
+    }
+    color.r /= weight;
+    color.g /= weight;
+    color.b /= weight;
+    RGB final_color;
+    final_color.r = std::min<uint8_t>(255, std::max<uint8_t>(0, color.r));
+    final_color.g = std::min<uint8_t>(255, std::max<uint8_t>(0, color.g));
+    final_color.b = std::min<uint8_t>(255, std::max<uint8_t>(0, color.b));
+    ret.push_back(final_color);
+  }
+  return ret;
+}
+void write_ppm(const std::vector<RGB>& colors, const std::string& filename) {
+  std::ofstream fout(filename.c_str());
+  if (!fout.good()) {
+    std::cerr <<"Unable to write to file: " << filename << std::endl;
+    return;
+  }
+  fout << "P6\n";
+  fout << IMAGE_DIM << " " << IMAGE_DIM << "\n";
+  fout << "255\n";
+  // each position in colors is an 8x8 block in the image
+  for (size_t i = 0;i < IMAGE_DIM; ++i) {
+    for (size_t j = 0;j < IMAGE_DIM; ++j) {
+      size_t block_x = i / BLOCK_DIM;
+      size_t block_y = j / BLOCK_DIM;
+      size_t block_idx = block_x * (IMAGE_DIM / BLOCK_DIM) + block_y;
+      RGB color = colors[block_idx];
+      fout << color.r << color.g << color.b;
+    }
+  }
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 2 ||
-        (argc == 2 && std::string(argv[1]) == "-h") ||
-        (argc == 2 && std::string(argv[1]) == "--help")
-        ) { 
-        std::cout<< "Usage: dedupe_estimator FILE1 [FILE2 ...]\n\n";
-        std::cout << "Estimates the amount of chunk level dedupe available in a\n"
-                     "collection of files. All files will be chunked together\n"
-                     "so if there are multiple versions of the file, all versions\n"
-                     "should be provided together to see how much can be saved.\n"
-                     "using Hugging Face's dedupped storage architecture.\n\n"
-                     "The chunking algorithm used here is **not** the same\n"
-                     "as the one being deployed, but it should provide a\n"
-                     "reasonable estimate." << std::endl;
-        return 1;
+  if (argc < 2 ||
+      (argc == 2 && std::string(argv[1]) == "-h") ||
+      (argc == 2 && std::string(argv[1]) == "--help")
+     ) { 
+    std::cout<< "Usage: dedupe_estimator FILE1 [FILE2 ...]\n\n";
+    std::cout << "Estimates the amount of chunk level dedupe available in a\n"
+              "collection of files. All files will be chunked together\n"
+              "so if there are multiple versions of the file, all versions\n"
+              "should be provided together to see how much can be saved.\n"
+              "using Hugging Face's dedupped storage architecture.\n\n"
+              "The chunking algorithm used here is **not** the same\n"
+              "as the one being deployed, but it should provide a\n"
+              "reasonable estimate." << std::endl;
+    return 1;
+  }
+
+  chunk_ctr_type hs;
+  size_t total_len = 0;
+
+  for (int i = 1; i < argc; ++i) {
+    std::vector<size_t> chunks_seen;
+    std::ifstream file(argv[i], std::ios::binary);
+    if (!file.is_open()) {
+      std::cerr << "Error opening file: " << argv[i] << std::endl;
+      continue;
     }
+    std::cerr << "Processing file " << argv[i] << std::endl;
 
-    std::unordered_map<size_t, size_t> hs;
-    size_t total_len = 0;
+    total_len += add_chunks(file, hs, i-1, chunks_seen);
+    std::vector<RGB> colors = generate_color_sequence(chunks_seen);
+    write_ppm(colors, std::string(argv[i]) + ".dedupe_image.ppm"); 
+    file.close();
+  }
 
-    for (int i = 1; i < argc; ++i) {
-        std::ifstream file(argv[i], std::ios::binary);
-        if (!file.is_open()) {
-            std::cerr << "Error opening file: " << argv[i] << std::endl;
-            continue;
-        }
-        std::cerr << "Processing file " << argv[i] << std::endl;
+  size_t chunk_bytes = 0;
+  chunk_ctr_type::const_iterator iter = hs.begin();
+  while (iter != hs.end()) {
+    chunk_bytes += iter->second.len;
+    ++iter;
+  }
 
-        total_len += add_chunks(file, hs);
-        file.close();
-    }
+  std::cout << "Total bytes in all files: " << total_len << std::endl;
+  std::cout << "Deduped bytes: " << chunk_bytes << std::endl;
 
-    size_t chunk_bytes = 0;
-    std::unordered_map<size_t, size_t>::const_iterator iter = hs.begin();
-    while (iter != hs.end()) {
-      chunk_bytes += iter->second;
-      ++iter;
-    }
-
-    std::cout << "Total bytes in all files: " << total_len << std::endl;
-    std::cout << "Deduped bytes: " << chunk_bytes << std::endl;
-
-    return 0;
+  return 0;
 }
