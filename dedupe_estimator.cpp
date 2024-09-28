@@ -475,8 +475,10 @@ int main(int argc, char* argv[]) {
     std::cerr << "Processing file " << argv[i] << std::endl;
 
     total_len += add_chunks(file, hs, i-1, chunks_seen);
-    std::vector<RGB> colors = generate_color_sequence(chunks_seen);
-    write_ppm(colors, std::string(argv[i]) + ".dedupe_image.ppm"); 
+    if (i != 1) {
+      std::vector<RGB> colors = generate_color_sequence(chunks_seen);
+      write_ppm(colors, std::string(argv[i]) + ".dedupe_image.ppm"); 
+    }
     file.close();
   }
 
