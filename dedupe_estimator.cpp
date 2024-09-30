@@ -349,11 +349,11 @@ struct FRGB {
 };
 const size_t IMAGE_DIM = 256;
 const size_t BLOCK_DIM = 8;
-const size_t SEQUENCE_LENGTH = (IMAGE_DIM / BLOCK_DIM) * (IMAGE_DIM / BLOCK_DIM);
+const size_t SEQUENCE_LENGTH = (IMAGE_DIM / BLOCK_DIM) * (IMAGE_DIM);
 
 FRGB COLORS[16] = {
-    {255, 0, 0},     // Red
     {0, 255, 0},     // Green
+    {255, 0, 0},     // Red
     {0, 0, 255},     // Blue
     {255, 255, 0},   // Yellow
     {255, 165, 0},   // Orange
@@ -433,12 +433,12 @@ void write_ppm(const std::vector<RGB>& colors, const std::string& filename) {
   fout << "P6\n";
   fout << IMAGE_DIM << " " << IMAGE_DIM << "\n";
   fout << "255\n";
-  // each position in colors is an 8x8 block in the image
+  // each position in colors is an 1x8 block in the image
   for (size_t i = 0;i < IMAGE_DIM; ++i) {
     for (size_t j = 0;j < IMAGE_DIM; ++j) {
       size_t block_x = i / BLOCK_DIM;
-      size_t block_y = j / BLOCK_DIM;
-      size_t block_idx = block_x * (IMAGE_DIM / BLOCK_DIM) + block_y;
+      size_t block_y = j;
+      size_t block_idx = block_x * IMAGE_DIM  + block_y;
       RGB color = colors[block_idx];
       fout << color.r << color.g << color.b;
     }
