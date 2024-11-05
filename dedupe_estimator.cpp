@@ -513,6 +513,7 @@ int main(int argc, char* argv[]) {
     tensor_compression = true;
     std::cerr << "Experimental tensor compression mode on" << std::endl;
     argv += 1;
+    argc -= 1;
   }
 
   chunk_ctr_type hs;
