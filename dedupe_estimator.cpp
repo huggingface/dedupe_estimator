@@ -284,8 +284,37 @@ size_t get_lz4_compressed_size(std::string& s) {
                                                 s.size(), max_compressed_size);
   return compressed_size;
 }
+size_t get_lz4_compressed_size_split(std::string& s) {
+  size_t rem = s.length() % 4;
+  std::string sa(s.length() / 4 + (rem >= 1), 0);
+  std::string sb(s.length() / 4 + (rem >= 2), 0);
+  std::string sc(s.length() / 4 + (rem >= 3), 0);
+  std::string sd(s.length() / 4, 0);
+  for (size_t i = 0;i < s.length() / 4; ++i) {
+    sa[i] = s[4 * i];
+    sb[i] = s[4 * i + 1];
+    sc[i] = s[4 * i + 2];
+    sd[i] = s[4 * i + 3];
+  }
+  switch (rem) {
+    case 1:
+      sa[s.length() / 4] = s[s.length() - 1];
+      break;
+    case 2:
+      sa[s.length() / 4] = s[s.length() - 2];
+      sb[s.length() / 4] = s[s.length() - 1];
+      break;
+    case 3:
+      sa[s.length() / 4] = s[s.length() - 3];
+      sb[s.length() / 4] = s[s.length() - 2];
+      sc[s.length() / 4] = s[s.length() - 1];
+      break;
+  }
+  return get_lz4_compressed_size(sa) + get_lz4_compressed_size(sb) + get_lz4_compressed_size(sc) + get_lz4_compressed_size(sd);
+}
 
-size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_num, std::vector<size_t> &chunks_seen) {
+
+size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_num, std::vector<size_t> &chunks_seen, bool tensor_compression) {
   char buffer[1024 * 1024];
   uint64_t h = 0;
   size_t buflen = 0;
@@ -311,7 +340,11 @@ size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_nu
         if (iter == chunk_ctr.end()) {
           chunk_info info;
           info.len = buflen;
-          info.compressed_len = get_lz4_compressed_size(buf);
+          if (tensor_compression) {
+            info.compressed_len = get_lz4_compressed_size_split(buf);
+          } else {
+            info.compressed_len = get_lz4_compressed_size(buf);
+          }
           info.first_seen = file_num;
           chunk_ctr[chunk_hash] = info;
           chunks_seen.push_back(file_num);
@@ -462,7 +495,7 @@ int main(int argc, char* argv[]) {
       (argc == 2 && std::string(argv[1]) == "-h") ||
       (argc == 2 && std::string(argv[1]) == "--help")
      ) { 
-    std::cout<< "Usage: dedupe_estimator FILE1 [FILE2 ...]\n\n";
+    std::cout<< "Usage: dedupe_estimator [-t] FILE1 [FILE2 ...]\n\n";
     std::cout << "Estimates the amount of chunk level dedupe available in a\n"
               "collection of files. All files will be chunked together\n"
               "so if there are multiple versions of the file, all versions\n"
@@ -470,8 +503,16 @@ int main(int argc, char* argv[]) {
               "using Hugging Face's dedupped storage architecture.\n\n"
               "The chunking algorithm used here is **not** the same\n"
               "as the one being deployed, but it should provide a\n"
-              "reasonable estimate." << std::endl;
+              "reasonable estimate.\n\n";
+    std::cout << "The -t flag will enable an experimental tensor compression mode"
+              << "for any neural network file\n\n";
     return 1;
+  }
+  bool tensor_compression = false;
+  if (std::string(argv[1]) == "-t") {
+    tensor_compression = true;
+    std::cerr << "Experimental tensor compression mode on" << std::endl;
+    argv += 1;
   }
 
   chunk_ctr_type hs;
@@ -486,7 +527,7 @@ int main(int argc, char* argv[]) {
     }
     std::cerr << "Processing file " << argv[i] << std::endl;
 
-    total_len += add_chunks(file, hs, i-1, chunks_seen);
+    total_len += add_chunks(file, hs, i-1, chunks_seen, tensor_compression);
     if (i != 1) {
       std::vector<RGB> colors = generate_color_sequence(chunks_seen);
       write_ppm(colors, std::string(argv[i]) + ".dedupe_image.ppm"); 
