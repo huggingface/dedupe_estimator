@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include "lz4.h"
 
 // Constants
 const uint64_t GEAR_HASH_TABLE[] = {
@@ -265,15 +266,24 @@ const uint64_t GEAR_HASH_TABLE[] = {
     0x63c7a906c1dd187b
 };
 const uint64_t MASK = 0xffff000000000000;
-const int MIN_LEN = 16384;
-const int MAX_LEN = 4 * 65536;
+const int MIN_LEN = 65536 / 8;
+const int MAX_LEN = 65536 * 2;
 
 struct chunk_info {
   size_t len;
+  size_t compressed_len;
   size_t first_seen;
 };
 
 typedef std::unordered_map<size_t, chunk_info> chunk_ctr_type;
+
+size_t get_lz4_compressed_size(std::string& s) {
+  size_t max_compressed_size = LZ4_compressBound(s.size());
+  std::string compressed(max_compressed_size, 0);
+  size_t compressed_size = LZ4_compress_default(s.c_str(), (char*)compressed.data(), 
+                                                s.size(), max_compressed_size);
+  return compressed_size;
+}
 
 size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_num, std::vector<size_t> &chunks_seen) {
   char buffer[1024 * 1024];
@@ -295,11 +305,13 @@ size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_nu
         std::copy(buffer + prev_offset, buffer + i + 1, std::inserter(buf, buf.end()));
         prev_offset = i + 1;
         size_t chunk_hash = std::hash<std::string>()(buf);
+
         // insert into chunk counter
         chunk_ctr_type::const_iterator iter = chunk_ctr.find(chunk_hash);
         if (iter == chunk_ctr.end()) {
           chunk_info info;
           info.len = buflen;
+          info.compressed_len = get_lz4_compressed_size(buf);
           info.first_seen = file_num;
           chunk_ctr[chunk_hash] = info;
           chunks_seen.push_back(file_num);
@@ -483,14 +495,17 @@ int main(int argc, char* argv[]) {
   }
 
   size_t chunk_bytes = 0;
+  size_t compressed_chunk_bytes = 0;
   chunk_ctr_type::const_iterator iter = hs.begin();
   while (iter != hs.end()) {
     chunk_bytes += iter->second.len;
+    compressed_chunk_bytes += iter->second.compressed_len;
     ++iter;
   }
 
   std::cout << "Total bytes in all files: " << total_len << std::endl;
-  std::cout << "Deduped bytes: " << chunk_bytes << std::endl;
+  std::cout << "Total deduped bytes: " << chunk_bytes << std::endl;
+  std::cout << "Total deduped compressed bytes: " << compressed_chunk_bytes << std::endl;
 
   return 0;
 }
