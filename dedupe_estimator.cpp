@@ -284,6 +284,34 @@ size_t get_lz4_compressed_size(std::string& s) {
                                                 s.size(), max_compressed_size);
   return compressed_size;
 }
+size_t get_lz4_compressed_size_split(std::string& s) {
+  size_t rem = s.length() % 4;
+  std::string sa(s.length() / 4 + (rem >= 1), 0);
+  std::string sb(s.length() / 4 + (rem >= 2), 0);
+  std::string sc(s.length() / 4 + (rem >= 3), 0);
+  std::string sd(s.length() / 4, 0);
+  for (size_t i = 0;i < s.length() / 4; ++i) {
+    sa[i] = s[4 * i];
+    sb[i] = s[4 * i + 1];
+    sc[i] = s[4 * i + 2];
+    sd[i] = s[4 * i + 3];
+  }
+  switch (rem) {
+    case 1:
+      sa[s.length() / 4] = s[s.length() - 1];
+      break;
+    case 2:
+      sa[s.length() / 4] = s[s.length() - 2];
+      sb[s.length() / 4] = s[s.length() - 1];
+      break;
+    case 3:
+      sa[s.length() / 4] = s[s.length() - 3];
+      sb[s.length() / 4] = s[s.length() - 2];
+      sc[s.length() / 4] = s[s.length() - 1];
+      break;
+  }
+  return get_lz4_compressed_size(sa) + get_lz4_compressed_size(sb) + get_lz4_compressed_size(sc) + get_lz4_compressed_size(sd);
+}
 
 size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_num, std::vector<size_t> &chunks_seen) {
   char buffer[1024 * 1024];
@@ -311,7 +339,7 @@ size_t add_chunks(std::ifstream& file, chunk_ctr_type& chunk_ctr, size_t file_nu
         if (iter == chunk_ctr.end()) {
           chunk_info info;
           info.len = buflen;
-          info.compressed_len = get_lz4_compressed_size(buf);
+          info.compressed_len = get_lz4_compressed_size_split(buf);
           info.first_seen = file_num;
           chunk_ctr[chunk_hash] = info;
           chunks_seen.push_back(file_num);
